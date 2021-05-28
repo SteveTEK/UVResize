@@ -1,0 +1,68 @@
+****************************************************************
+* TITLE       :  RSZ002
+* FUNCTION    :  Creates HASH.AID.FILE records  from a list
+*                created via RSZ001
+* DATE        : 14/11/96
+* AUTHOR      : IKG
+* REV DETAILS :
+**ned   10859  sjh  10/09/02  
+***************************************************************
+*
+      PROMPT ""
+      HALF=@(-7)
+      FULL=@(-8)
+      BELL=CHAR(7)
+      SYSMES=""
+      NEWLIST=""
+      COUNT=0
+      LIST=""
+*
+      EQUATE TYPE TO FILESTATS<21>
+      EQUATE MODULO TO FILESTATS<22>
+      EQUATE SEP TO FILESTATS<23>
+      EQUATE BYTES TO FILESTATS<6>
+*
+      TCL=@SENTENCE
+!!!      LISTNAME=FIELD(TCL," ",2)
+      EXECUTE "CLEAR-FILE DATA HASH.AID.FILE"
+!!!      IF LISTNAME='' THEN
+      LISTNAME='RSZ.LIST'
+!!!         EXECUTE "RSZ001 LIST ":LISTNAME
+!!!   END
+      EXECUTE "GET-LIST ":LISTNAME
+      LOOP WHILE READNEXT FILEID DO
+         OPEN FILEID TO OPENFIL THEN
+            STATUS FILESTATS FROM OPENFIL THEN
+               OK=0
+               GOSUB 100                 ; * check file size
+               IF OK THEN
+                  GOSUB 200              ; * run HASH.AID
+               END ELSE
+*                  LIST=INSERT(LIST,1;FILEID:"*":TYPE:"*":MODULO:"*":SEP)
+*                  CRT LIST<1>:" size = ":BYTES
+               END
+            END
+         END
+      REPEAT
+**
+      STOP
+**
+100:* test file
+*
+      TESTFIG=MODULO*SEP
+      BEGIN CASE
+         CASE TYPE NE "18"
+         CASE BYTES/TESTFIG LT 1000
+         CASE 1
+            OK=1
+      END CASE
+      RETURN
+**
+200:* run HASH.AID routine
+**
+      CMND="HASH.AID ":FILEID:" ":TYPE:" ":MODULO:" ":SEP
+      HUSH ON
+      EXECUTE CMND
+      HUSH OFF
+      RETURN
+**

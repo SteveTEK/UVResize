@@ -1,0 +1,93 @@
+****************************************************************
+* TITLE       :  RSZ001
+* FUNCTION    :  Creates a list of files which are type 18 and
+*              excludes temp stuff
+* DATE        : 6/11/96
+* AUTHOR      : Ian Goulding
+* REV DETAILS :
+* ned   10859  sjh  10/09/02
+***************************************************************
+*
+      PROMPT ""
+      HALF=@(-7)
+      FULL=@(-8)
+      BELL=CHAR(7)
+      SYSMES=""
+      NEWLIST=""
+      COUNT=0
+*
+      RUBBISH=""
+      RUBBISH<1,1>="TEMP"
+      RUBBISH<1,2>="TMP"
+      RUBBISH<1,3>="TEST"
+      RUBBISH<1,4>="BACK"
+      RUBBISH<1,5>="BCK"
+      RUBBISH<1,6>="WORK"
+      RUBBISH<1,7>="&"
+      RUBBISH<1,8>="BAK"
+*
+      ONAME = "VOC" ; GOSUB 99000 ; VOCFIL=INAME
+*
+!!!CRT @SENTENCE
+!!!      LISTNAME= FIELD(@SENTENCE," ",2,1)
+!!!      IF LISTNAME = "" THEN
+      LISTNAME = "RSZ.LIST"
+      EXECUTE 'SSELECT VOC WITH F1 LIKE F...' RTNLIST LIST1
+!!!      END ELSE
+!!!         FILELIST=FIELD(@SENTENCE," ",3,1)
+!!!         IF FILELIST THEN
+!!!            IF FILELIST[1,1] NE "/" THEN
+!!!               FORMLIST FILELIST TO LIST1
+!!!            END ELSE
+!!!               GETLIST FILELIST[2,99] TO LIST1 ELSE LIST1=""
+!!!            END
+!!!         END ELSE
+!!!            EXECUTE "SSELECT VOC WITH F1 LIKE F..." RTNLIST LIST1
+!!!         END
+!!!      END
+!!!      HUSH ON
+!!!      HUSH OFF
+*
+      LOOP WHILE READNEXT ID FROM LIST1 DO
+         KNOCKOUT=0
+         FOR X = 1 TO 7
+            IF INDEX(ID,RUBBISH<1,X>,1) THEN KNOCKOUT=1
+         NEXT X
+         IF ID NE OCONV(ID,"MCU") THEN KNOCKOUT=1
+         IF NOT(KNOCKOUT) THEN
+            READ REC FROM VOCFIL,ID THEN
+               IF REC<2>[1,1] NE "/" THEN
+                  CRT ID
+                  OPEN ID TO OPEN.FILE THEN
+                     STATUS FILESTAT FROM OPEN.FILE THEN
+                        IF FILESTAT<21>="18" THEN
+                           NEWLIST<-1>=ID
+                           COUNT+=1
+                        END
+                     END
+                  END
+               END
+            END
+         END
+      REPEAT
+      WRITELIST NEWLIST ON LISTNAME
+      CRT COUNT:" records written to ":LISTNAME
+**
+      STOP
+**
+99000:*---- FILE OPEN ROUTINE -----
+      OPEN ONAME TO INAME ELSE
+         INAME = ""
+         SYSMES = "Cannot open ":ONAME:" FILE ":BELL
+         GOSUB 99999
+      END
+      RETURN
+*
+99999:***** SYSTEM MESSAGE ROUTINE *****
+*
+      X=INT((76-LEN(SYSMES))/2)
+      PRINT @(X,22):SYSMES:
+      INPUT ANS,5
+      PRINT @(0,22):@(-4)
+      RETURN
+   END
