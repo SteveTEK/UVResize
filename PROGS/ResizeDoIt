@@ -1,211 +1,243 @@
-      ****************************************************************
-      * TITLE       : RESIZER
-      * FUNCTION    : Resize files based on info from HASH.AID.FILE.
-      * DATE        : 7/11/96
-      * AUTHOR      : sjh
-      * REV DETAILS : Should be run after ResizeBuildList + ResizeGetStats 
-      *               which clears + updates hash.aid.file
-      **ned   10859  sjh  10/09/02
-      ***************************************************************
-      *
-      PROMPT ""
-      HALF=@(-7)
-      FULL=@(-8)
-      BELL=CHAR(7)
-      SYSMES=""
-      Today=DATE()
-      TotalBytes=0
-      TotalTime=0
-      CurrentAverage="10000"                   ; * set starting avg bytes per second
-      *
-      EQUATE DataBytes TO HAFREC<2>
-      EQUATE Items TO HAFREC<1>
-      Days='Mon':@AM:'Tue':@AM:'Wed':@AM:'Thu':@AM:'Fri':@AM:'Sat':@AM:'Sun'
-      *
-      TCL=@SENTENCE
-      IF INDEX(TCL,'TEST',1) THEN TEST=1 ELSE TEST=0
+****************************************************************
+* TITLE       : RESIZER
+* FUNCTION    : Resize files based on info from HASH.AID.FILE.
+* DATE        : 7/11/96
+* AUTHOR      : sjh
+* REV DETAILS : Should be run after ResizeBuildList + ResizeGetStats 
+*               which clears + updates hash.aid.file
+**ned   10859  sjh  10/09/02
+***************************************************************
 *
-      ONAME = "HASH.AID.FILE" ; GOSUB 99000 ; HAFFIL=INAME
-      SYSMES=""
-      ONAME = "HASH.AID.HIST" ; GOSUB 99000 ; HAHFIL=INAME
-      ONAME = "UV.ACCOUNT" ; GOSUB 99000 ; UVAFIL=INAME
-      OPEN 'PARMS' TO PARFL ELSE STOP 201,'PARAMETER'
+   TCL = @SENTENCE
+   IF INDEX(TCL, 'TEST', 1) THEN TEST = 1 ELSE TEST = 0
+   GOSUB Init
+   IF ErrMess = '' THEN GOSUB Main
+   STOP
 *
-      READ RSZPAR FROM PARFL,'RESIZE.PAR' ELSE
-         RSZPAR=''
-         RSZPAR<1>="79200":@VM:"79200":@VM:"79200":@VM:"79200":@VM:"79200":@VM:"54000"
-         RSZPAR<2>="21600":@VM:"21600":@VM:"21600":@VM:"21600":@VM:"21600"
-         WRITE RSZPAR ON PARFL,'RESIZE.PAR'
+Init:
+   PROMPT ""
+   HALF = @(-7)
+   FULL = @(-8)
+   BELL = CHAR(7)
+   ErrMess = ""
+   Today = DATE()
+   TotalBytes = 0
+   TotalTime = 0
+   CurrentAverage = "10000"                    ;* set starting avg bytes per second
+   *
+   EQUATE DataBytes TO HAFREC<2>
+   EQUATE Items TO HAFREC<1>
+   Days = 'Mon' : @AM : 'Tue' : @AM : 'Wed' : @AM : 'Thu' : @AM : 'Fri' : @AM : 'Sat' : @AM : 'Sun'
+   *
+
+   ONAME = "HASH.AID.FILE"; GOSUB OpenFile; HAFFIL = INAME
+   IF ErrMess NE "" THEN
+      CRT ErrMess
+      CRT 'You probably need to run "ResizeGetStats", which will build HASH.AID.FILE'
+      STOP
+   END
+   ONAME = "HASH.AID.HIST"; GOSUB OpenFile; HAHFIL = INAME
+   IF ErrMess NE "" THEN
+      EXECUTE "CREATE-FILE HASH.AID.HIST 18 37 1"
+      GOSUB OpenFile
+      HAHFIL = INAME
+   END
+   ONAME = "UV.ACCOUNT"; GOSUB OpenFile; UVAFIL = INAME
+   IF ErrMess NE "" THEN
+      EXECUTE "SET-FILE UV UV.ACCOUNT UV.ACCOUNT"
+      GOSUB OpenFile
+      UVAFIL = INAME
+   END
+   PARMSOpen = 1
+   OPEN 'PARMS' TO PARFL ELSE PARMSOpen = 0
+   *
+   IF ErrMess = '' THEN
+      IF PARMSOpen THEN
+         READ RSZPAR FROM PARFL, 'RESIZE.PAR' ELSE RSZPAR = ''
+      END ELSE RSZPAR = ''
+      IF RSZPAR<1> = '' THEN
+         RSZPAR<1> = "79200,79200,79200,79200,79200,54000"
+         RSZPAR<2> = "21600,21600,21600,21600,21600"
       END
-      DOW=OCONV(DATE(),"DW")
-      StartDOW=DOW
+      RSZPAR<1> = EREPLACE(RSZPAR<1>, ',', @VM)
+      RSZPAR<2> = EREPLACE(RSZPAR<2>, ',', @VM)
+      IF RSZPAR<3> = '' THEN
+         RSZPAR<3> = '/tmp/resize.log'
+      END
+      Logging = 1
+      OPENSEQ RSZPAR<3> TO LogFile ELSE
+         EXECUTE 'sh -c "> ' : RSZPAR<3> : '"'
+         OPENSEQ RSZPAR<3> TO LogFile ELSE Logging = 0
+      END
+      DOW = OCONV(DATE(), "DW")
+      StartDOW = DOW
       CRT 'RESIZE.PAR'
       CRT '  DOW   Start   End'
-      FOR Z=1 TO 7
-         IF Z=DOW THEN TDFLAG='*' ELSE TDFLAG=' '
-         CRT TDFLAG 'L#3':Z 'L#3':OCONV(RSZPAR<1,Z>,'MTS') 'L#9':OCONV(RSZPAR<2,Z>,'MTS') 'L#9'
+      FOR Z = 1 TO 7
+         IF Z = DOW THEN TDFLAG = '*' ELSE TDFLAG = ' '
+         CRT TDFLAG 'L#3' : Z 'L#3' : OCONV(RSZPAR<1, Z>, 'MTS') 'L#9' : OCONV(RSZPAR<2, Z>, 'MTS') 'L#9'
       NEXT Z
-      IF TEST THEN
-         StartTime=TIME()
-      END ELSE StartTime=RSZPAR<1,DOW>
-      AvailableTime=0-StartTime
-      EndDOW=DOW
-      IF RSZPAR<2>#'' THEN
-         LOOP
-            IF RSZPAR<2,EndDOW>#'' THEN
-               AvailableTime=AvailableTime+RSZPAR<2,EndDOW>
-            END ELSE AvailableTime=AvailableTime+86400
-         UNTIL RSZPAR<2,EndDOW>#'' DO
-            EndDOW=EndDOW+1
-            IF EndDOW>7 THEN EndDOW=1
-         REPEAT
-      END
-      EndTime=RSZPAR<2,DOW>
-      CurrentTime=TIME()
-      IF CurrentTime < StartTime THEN
-         CRT 'Time is now: ':OCONV(TIME(),'MTS'):', Sleeping until: ':OCONV(StartTime,'MTS')
-         IF NOT(TEST) THEN
-            EXECUTE 'SLEEP ':OCONV(StartTime,'MTS')
-         END
-      END
-      IF SYSMES NE "" THEN
-         EXECUTE "CREATE-FILE HASH.AID.HIST 18 37 1"
-         GOSUB 99000
-         HAHFIL=INAME
-      END
-      * process each file held in HASH.AID.FILE
-      IF NOT(SYSTEM(11)) THEN SELECT HAFFIL
-      CRT 'Start: ':Days<StartDOW>:' ':OCONV(StartTime,'MTS'):', End: ':Days<EndDOW>:' ':OCONV(EndTime,'MTS')
-      CRT 'Total available time = ':OCONV(AvailableTime,'MTS'):' (':AvailableTime:')'
-      CRT
-      EOL=0
-      RequiredTime=0
-      ElapsedTime=0
+   END
+   *
+   RETURN
+*
+Main:
+   IF TEST THEN
+      StartOfDay = TIME()
+   END ELSE StartOfDay = RSZPAR<1, DOW>
+   AvailableTime = 0 - StartOfDay
+   EndDOW = DOW
+   IF RSZPAR<2> # '' THEN
       LOOP
-         CurrentTime=TIME()
-         READNEXT HAFKEY ELSE EOL=1
-!!!      UNTIL EOL OR (CurrentTime>EndTime AND NOT(TEST)) DO
-      UNTIL EOL OR ((AvailableTime-ElapsedTime)<1 AND NOT(TEST)) DO
-         READ HAFREC FROM HAFFIL,HAFKEY THEN
-            IF Items GT 0 THEN
-               ZD=OCONV(DATE(),"DW")
-               CRT Days<ZD>:' ':OCONV(CurrentTime,"MTS"):" ":HAFKEY "L#30"
-               GOSUB CalcModSep                 ; * work out new mod/sep
-               OK=0
-               GOSUB TimeCheck                 ; * check to see if enough time
-               IF OK THEN
-                  IF TEST THEN
-                     CRT '   Test mode - no action taken'
-                  END ELSE
-                     EXECUTE "RESIZE ":FILENAME:" ":TYPE:" ":MOD:" ":SEP
-                     GOSUB DisplayTimes           ; * calculate times
-                     GOSUB ReadHAH           ; * update HASH.AID.HIST
-                     CRT
-                  END
+         IF RSZPAR<2, EndDOW> # '' THEN
+            AvailableTime = AvailableTime + RSZPAR<2, EndDOW>
+         END ELSE AvailableTime = AvailableTime + 86400
+      UNTIL RSZPAR<2, EndDOW> # '' DO
+         EndDOW = EndDOW + 1
+         IF EndDOW > 7 THEN EndDOW = 1
+      REPEAT
+   END
+   EndOfDay = RSZPAR<2, DOW>
+   StartTime = TIME()
+   IF StartTime < StartOfDay THEN
+      CRT 'Time is now: ' : OCONV(TIME(), 'MTS') : ', Sleeping until: ' : OCONV(StartOfDay, 'MTS')
+      IF NOT (TEST) THEN
+         EXECUTE 'SLEEP ' : OCONV(StartOfDay, 'MTS')
+      END
+   END
+   * process each file held in HASH.AID.FILE
+   IF NOT(SYSTEM(11)) THEN SELECT HAFFIL
+   CRT 'Start: ' : Days<StartDOW> : ' ' : OCONV(StartOfDay, 'MTS') : ', End: ' : Days<EndDOW> : ' ' : OCONV(EndOfDay, 'MTS')
+   CRT 'Total available time = ' : OCONV(AvailableTime, 'MTS') : ' (' : AvailableTime : ')'
+   CRT
+   EOL = 0
+   RequiredTime = 0
+   ElapsedTime = 0
+   LOOP
+      StartTime = TIME()
+      READNEXT HAFKEY ELSE EOL = 1
+      !!!      UNTIL EOL OR (StartTime>EndOfDay AND NOT(TEST)) DO
+   UNTIL EOL OR ((AvailableTime - ElapsedTime) < 1 AND NOT (TEST)) DO
+      READ HAFREC FROM HAFFIL, HAFKEY THEN
+         IF Items GT 0 THEN
+            ZD = OCONV(DATE(), "DW")
+            CRT Days<ZD> : ' ' : OCONV(StartTime, "MTS") : " " : HAFKEY "L#30"
+            GOSUB CalcModSep                   ;* work out new mod/sep
+            OK = 0
+            GOSUB TimeCheck                    ;* check to see if enough time
+            IF OK THEN
+               IF TEST THEN
+                  CRT '   Test mode - no action taken'
                END ELSE
-                  CRT '   skipped - insufficient time'
+                  EXECUTE "RESIZE " : FileName : " " : NewType : " " : NewMod : " " : NewSep
+                  GOSUB DisplayTimes           ;* calculate times
+                  GOSUB UpdateHAH              ;* update HASH.AID.HIST
+                  CRT
                END
+            END ELSE
+               CRT '   skipped - insufficient time'
             END
          END
-      REPEAT
-**
-      STOP
+      END
+   REPEAT
+   *
+   RETURN
 *
 *-----------------subroutines----------------------*
 *
-CalcModSep:* work out new modulo & separation
+CalcModSep: * work out new modulo & separation
+   *
+   NO.OF.STARS = DCOUNT(HAFKEY, "*")
+   FileName = FIELD(HAFKEY, "*", NO.OF.STARS - 3, 1)
+   CurrentType = FIELD(HAFKEY, "*", NO.OF.STARS - 2, 1)
+   CurrentMod = FIELD(HAFKEY, "*", NO.OF.STARS - 1, 1)
+   CurrentSep = FIELD(HAFKEY, "*", NO.OF.STARS, 1)
+   NewType = CurrentType
+   *
+   AverageRecSize = INT(DataBytes / Items)
+   NewSep = INT((AverageRecSize + 511) / 512)
+   NewMod = INT(AverageRecSize * Items / (400 * NewSep) + 1)
+   * above value modified to 400 from 512 to allow growth ikg
+   EXECUTE "PRIME " : NewMod CAPTURING OUTPUT
+   NewMod = FIELD(OUTPUT, ":", 3, 1)
+   NewMod = OCONV(NewMod, "MCN")
+   TotalBytes += DataBytes
+   *
+   CRT "   AV=" : AverageRecSize : " NewSep=" : NewSep :
+   CRT " NewMod=" : NewMod : " SIZE=" : DataBytes : " Items=" : Items
+   RETURN
 *
-      NO.OF.STARS=DCOUNT(HAFKEY,"*")
-      FILENAME=FIELD(HAFKEY,"*",NO.OF.STARS-3,1)
-      OLD.TYPE=FIELD(HAFKEY,"*",NO.OF.STARS-2,1)
-      OLD.MOD =FIELD(HAFKEY,"*",NO.OF.STARS-1,1)
-      OLD.SEP =FIELD(HAFKEY,"*",NO.OF.STARS,1)
-      TYPE=OLD.TYPE
-      *
-      AVG.SIZE=INT(DataBytes/Items)
-      SEP=INT((AVG.SIZE+511)/512)
-      MOD=INT(AVG.SIZE*Items/(400*SEP)+1)
-      * above value modified to 400 from 512 to allow growth ikg
-      EXECUTE "PRIME ":MOD CAPTURING OUTPUT
-      MOD=FIELD(OUTPUT,":",3,1)
-      MOD=OCONV(MOD,"MCN")
-      TotalBytes+=DataBytes
-      *
-      CRT "   AV=":AVG.SIZE:" SEP=":SEP:
-      CRT " MOD=":MOD:" SIZE=":DataBytes:" Items=":Items
-      RETURN
-*
-ReadHAH:* update HASH.AID.HIST
-*
-      READ HAHREC FROM HAHFIL,FILENAME ELSE HAHREC=""
-      HAHREC=INSERT(HAHREC,1,1;TYPE)
-      HAHREC=INSERT(HAHREC,2,1;MOD)
-      HAHREC=INSERT(HAHREC,3,1;SEP)
-      HAHREC=INSERT(HAHREC,4,1;OLD.TYPE)
-      HAHREC=INSERT(HAHREC,5,1;OLD.MOD)
-      HAHREC=INSERT(HAHREC,6,1;OLD.SEP)
-      HAHREC=INSERT(HAHREC,7,1;Today)
-      HAHREC=INSERT(HAHREC,8,1;CurrentTime)
-      HAHREC=INSERT(HAHREC,9,1;ACTUAL.ETM)
-      HAHREC=INSERT(HAHREC,10,1;DataBytes)
-      HAHREC=INSERT(HAHREC,11,1;Items)
-      WRITE HAHREC ON HAHFIL,FILENAME
-      RETURN
+UpdateHAH: * update HASH.AID.HIST
+   *
+   READ HAHREC FROM HAHFIL, FileName ELSE HAHREC = ""
+   HAHREC = INSERT(HAHREC, 1, 1; NewType)
+   HAHREC = INSERT(HAHREC, 2, 1; NewMod)
+   HAHREC = INSERT(HAHREC, 3, 1; NewSep)
+   HAHREC = INSERT(HAHREC, 4, 1; CurrentType)
+   HAHREC = INSERT(HAHREC, 5, 1; CurrentMod)
+   HAHREC = INSERT(HAHREC, 6, 1; CurrentSep)
+   HAHREC = INSERT(HAHREC, 7, 1; Today)
+   HAHREC = INSERT(HAHREC, 8, 1; StartTime)
+   HAHREC = INSERT(HAHREC, 9, 1; EndTime)
+   HAHREC = INSERT(HAHREC, 10, 1; DataBytes)
+   HAHREC = INSERT(HAHREC, 11, 1; Items)
+   WRITE HAHREC ON HAHFIL, FileName
+   RETURN
 **
-DisplayTimes:* display times
+DisplayTimes: * display times
+   *
+   EndTime = TIME()
+   ElapsedTime = EndTime - StartTime
+   IF ElapsedTime LT 0 THEN ElapsedTime = ElapsedTime * -1
+   TotalTime += ElapsedTime
+   IF TotalTime < 1 THEN TotalTime = 1
+   CurrentAverage = INT(TotalBytes / TotalTime)
+   *
+   DISPLAY.TIME = FileName : " processed in " : OCONV(ElapsedTime, "MTS") : ", total time = " : OCONV(TotalTime, "MTS")
+   DISPLAY.TIME2 = "   Current average = " : CurrentAverage : " bytes per second."
+   CRT DISPLAY.TIME2
+   CRT '   ' : OCONV(EndTime, "MTS") : " " : DISPLAY.TIME
+   CRT
+   RETURN
 *
-      ACTUAL.ETM=TIME()
-      TIME.TAKEN=ACTUAL.ETM-CurrentTime
-      IF TIME.TAKEN LT 0 THEN TIME.TAKEN=TIME.TAKEN*-1
-      TotalTime+=TIME.TAKEN
-      IF TotalTime<1 THEN TotalTime=1
-      CurrentAverage=INT(TotalBytes/TotalTime)
-      *
-      DISPLAY.TIME= FILENAME:" processed in ":OCONV(TIME.TAKEN,"MTS"):", total time = ":OCONV(TotalTime,"MTS")
-      DISPLAY.TIME2="   Current average = ":CurrentAverage:" bytes per second."
-      CRT DISPLAY.TIME2
-      CRT '   ':OCONV(ACTUAL.ETM,"MTS"):" ":DISPLAY.TIME
-      CRT
-      RETURN
-      *
-TimeCheck:* check if enough time to process next file
-      CURR.DOW=OCONV(DATE(),"DW")
-      IF CURR.DOW<StartDOW THEN CURR.DOW=CURR.DOW+7
-      ElapsedTime=((CURR.DOW-StartDOW)*86400)-StartTime+TIME()
-      RequiredTime=INT(DataBytes/CurrentAverage)
-      OK=0
-      EST.ETM=INT(DataBytes/CurrentAverage)+TIME()
-      IF EST.ETM>86400 THEN
-         EST.ETM=EST.ETM-86400
-*        New day
-         DOW=DOW+1
-         IF DOW>7 THEN DOW=1
-         EndTime=RSZPAR<2,DOW>
-         IF EndTime='' THEN
-            IF DOW=7 THEN NEXTDOW=1 ELSE NEXTDOW=DOW+1
-            NEXT.ETM=RSZPAR<2,NEXTDOW>
-            IF NEXT.ETM='' THEN NEXT.ETM=86400
-            EndTime=86400+NEXT.ETM
-         END
+TimeCheck: * check if enough time to process next file
+   CURR.DOW = OCONV(DATE(), "DW")
+   IF CURR.DOW < StartDOW THEN CURR.DOW = CURR.DOW + 7
+   ElapsedTime = ((CURR.DOW - StartDOW) * 86400) - StartOfDay + TIME()
+   RequiredTime = INT(DataBytes / CurrentAverage)
+   OK = 0
+   EstimatedEndTime = INT(DataBytes / CurrentAverage) + TIME()
+   IF EstimatedEndTime > 86400 THEN
+      EstimatedEndTime = EstimatedEndTime - 86400
+      *        New day
+      DOW = DOW + 1
+      IF DOW > 7 THEN DOW = 1
+      EndOfDay = RSZPAR<2, DOW>
+      IF EndOfDay = '' THEN
+         IF DOW = 7 THEN NEXTDOW = 1 ELSE NEXTDOW = DOW + 1
+         NextEndOfDay = RSZPAR<2, NEXTDOW>
+         IF NextEndOfDay = '' THEN NextEndOfDay = 86400
+         EndOfDay = 86400 + NextEndOfDay
       END
-      IF RequiredTime < (AvailableTime-ElapsedTime) THEN OK=1 ELSE OK=0
-      CRT "   Time required: ":RequiredTime:", remaining: ":(AvailableTime-ElapsedTime)
-      RETURN
-*
-*
-99000:*---- FILE OPEN ROUTINE -----
-      OPEN ONAME TO INAME ELSE
-         INAME = ""
-         SYSMES = "Cannot open ":ONAME:" FILE ":BELL
-         GOSUB 99999
-      END
-      RETURN
-      *
-99999:***** SYSTEM MESSAGE ROUTINE *****
-      *
-      X=INT((76-LEN(SYSMES))/2)
-      PRINT @(X,22):SYSMES:
-      INPUT ANS,5
-      PRINT @(0,22):@(-4)
-      RETURN
    END
+   IF RequiredTime < (AvailableTime - ElapsedTime) THEN OK = 1 ELSE OK = 0
+   CRT "   Time required: " : RequiredTime : ", remaining: " : (AvailableTime - ElapsedTime)
+   RETURN
+*
+*
+OpenFile: *---- FILE OPEN ROUTINE -----
+   OPEN ONAME TO INAME ELSE
+      INAME = ""
+      ErrMess = "Cannot open " : ONAME : " FILE " : BELL
+      GOSUB 99999
+   END
+   RETURN
+*
+99999: ***** SYSTEM MESSAGE ROUTINE *****
+   *
+   X = INT((76 - LEN(ErrMess)) / 2)
+   PRINT @(X, 22) : ErrMess :
+   INPUT ANS, 5
+   PRINT @(0, 22) : @(-4)
+   RETURN
+END

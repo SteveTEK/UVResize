@@ -19,7 +19,7 @@
     "style.keyword": "keep",
     "style.commentMark": "keep",
     "style.keywordCase": "keep",
-    "indent.base": 0,
+    "indent.base": 1,
     "indent.block": true,
     "indent.commentLine": true,
     "indent.directive": false,
