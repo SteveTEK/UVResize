@@ -1,0 +1,93 @@
+      SUBROUTINE ResizeCalc(FileName, FileStats, FSRec, Opts)
+*
+      EQUATE Type TO FileStats<21>
+      EQUATE Modulo TO FileStats<22>
+      EQUATE Separation TO FileStats<23>
+      EQUATE LastUpdate TO FileStats<16>
+      EQUATE FilePath TO FileStats<27>
+*
+      IF INDEX(Opts<1>, 'T', 1) THEN Trace = 1 ELSE Trace = 0
+      MaxAge = Opts<2>
+      IF MaxAge = '' THEN MaxAge = 31
+      MaxBytes = Opts<3>
+      IF MaxBytes = '' THEN MaxBytes = 1000
+      MinItems = Opts<4>
+      IF MinItems = '' THEN MinItems = 20
+      MinSep = Opts<5>
+      IF MinSep = '' THEN MinSep = 1
+      MaxSep = Opts<6>
+      IF MaxSep = '' THEN MaxSep = 32
+*
+      SCt = DCOUNT(FilePath, '/')
+      Account = FIELD(FilePath, '/', SCt-1)
+      RealFNm = FIELD(FilePath, '/', SCt)
+      TotFrames=Modulo*Separation
+      FSRec = ''
+      BEGIN CASE
+         CASE Type < 2 OR Type > 18
+*           can't be resized
+         CASE (Date() - LastUpdate) > MaxAge
+*           inactive file
+         CASE 1
+            EXECUTE 'FILE.STAT ':FileName CAPTURING FSInfo
+            LnCt = DCOUNT(FSInfo, @AM)
+            FOR LnNo = 1 TO LnCt
+               Ln = TRIM(FSInfo<LnNo>)
+               BEGIN CASE
+                  CASE INDEX(Ln, 'Number of records', 1)
+                     Items = FIELD(Ln, '=', 2)
+                     Items = TRIM(Items)
+                  CASE INDEX(Ln, 'Number of data bytes', 1)
+                     Bytes = FIELD(Ln, '=', 2)
+                     Bytes = TRIM(Bytes)
+                  CASE INDEX(Ln, 'Average number of bytes per group', 1)
+                     BytesPerGroup = FIELD(Ln, '=', 2)
+                     BytesPerGroup = TRIM(BytesPerGroup)
+                     BytesPerGroup = INT(BytesPerGroup)
+                  CASE INDEX(Ln, 'Average number of bytes per record', 1)
+                     AverageRecSize = FIELD(Ln, '=', 2)
+                     AverageRecSize = TRIM(AverageRecSize)
+                     AverageRecSize = INT(AverageRecSize)
+               END CASE
+            NEXT LnNo
+            BytesPerFrame = Bytes/TotFrames
+            IF BytesPerFrame > MaxBytes AND Items > MinItems THEN
+               Comments = ''
+               FSRec<1> = FileName
+               FSRec<2> = Account
+               FSRec<3> = RealFNm
+               FSRec<4> = Type
+               FSRec<5> = Modulo
+               FSRec<6> = Separation
+               FSRec<7> = Bytes
+               FSRec<8> = Items
+               FSRec<9> = BytesPerGroup
+               FSRec<10> = AverageRecSize
+               NewType = Type
+               BEGIN CASE
+                  CASE AverageRecSize > 330
+                     SepFactor = 3
+                  CASE AverageRecSize > 250
+                     SepFactor = 2
+                  CASE 1
+                     SepFactor = 1
+               END CASE
+               NewSep = INT((AverageRecSize + 511) / 512) * SepFactor
+               IF NewSep < MinSep THEN NewSep = MinSep
+               IF NewSep > MaxSep THEN NewSep = MaxSep
+               NewMod = INT(Bytes / (450 * NewSep) + 1) ;* 450 allows for 10% growth
+               IF NewMod > Items THEN
+                  NewMod = Items * 1.1
+                  IF AverageRecSize > (MaxSep * 512) THEN Comments := ' Type19?'
+               END
+               EXECUTE 'PRIME ':NewMod CAPTURING OUTPUT
+               NewMod = FIELD(OUTPUT, ":", 3, 1)
+               NewMod = OCONV(NewMod, "MCN")
+               FSRec<14> = NewType
+               FSRec<15> = NewMod
+               FSRec<16> = NewSep
+               FSRec<20> = Comments
+            END
+      END CASE
+*
+      RETURN

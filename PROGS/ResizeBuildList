@@ -8,69 +8,151 @@
 * ned   10859  sjh  10/09/02
 ***************************************************************
 *
-      PROMPT ""
-      HALF=@(-7)
-      FULL=@(-8)
-      BELL=CHAR(7)
-      SYSMES=""
-      NEWLIST=""
+*
+      EQUATE FilePath TO FileStats<27>
+*
+      GOSUB Init
+      GOSUB OpenLog
+      GOSUB Main
+*
+      STOP
+*
+Init:
+*
+      ProgName = 'ResizeBuildList'
       COUNT=0
+      ThisAcc = @WHO
 *
-      Rubbish=""
-      Rubbish<1,1>="TEMP"
-      Rubbish<1,2>="TMP"
-      Rubbish<1,3>="TEST"
-      Rubbish<1,4>="BACK"
-      Rubbish<1,5>="BCK"
-      Rubbish<1,6>="WORK"
-      Rubbish<1,7>="&"
-      Rubbish<1,8>="BAK"
+      OPEN 'VOC' TO VOCFIL ELSE STOP 201,'VOC'
+      RunOpts = FIELD(@SENTENCE, '|', 2)
+      RunOpts = EREPLACE(RunOpts, ',', @AM)
+      IF RunOpts<1> # '' THEN
+         ParFilNm = RunOpts<1>
+      END ELSE ParFilNm = 'PARMS'
 *
-      ONAME = "VOC" ; GOSUB 99000 ; VOCFIL=INAME
+      OPEN ParFilNm TO F.PARMS THEN
+         READ R.PARMS FROM F.PARMS, ProgName ELSE R.PARMS = ''
+      END ELSE R.PARMS = ''
+      IgnoreList = EREPLACE(R.PARMS<1>, ',', @VM)
+      IF IgnoreList = '' THEN
+         IgnoreList<1>="TEMP"
+         IgnoreList<1,-1>="TMP"
+         IgnoreList<1,-1>="TEST"
+         IgnoreList<1,-1>="BACK"
+         IgnoreList<1,-1>="BCK"
+         IgnoreList<1,-1>="WORK"
+         IgnoreList<1,-1>="&"
+         IgnoreList<1,-1>="BAK"
+         IgnoreList<1,-1>="VOC"
+      END
+      IgnoreCt = DCOUNT(IgnoreList<1>, @VM)
+      IncludeAccList = EREPLACE(R.PARMS<2>, ',', @VM)
+      IF IncludeAccList = '' THEN
+         IncludeAccList = ThisAcc
+         IncludeQ = 0
+      END ELSE IncludeQ = 1
+      LogDir = R.PARMS<3>
+      IF LogDir = '' THEN LogDir = '/tmp'
+      Opts = EREPLACE(R.PARMS<4>, ',', @AM)
+*     1 - 'T' = Trace
+*     2 - ignore files older than n days (default = 31)
+*     3 - maximum bytes per frame (default = 1000)
+*     4 - minimum number of items in file (default = 20)
+*     5 - min sep (default = 1)
+*     6 - max sep (default = 32)
+*
+      IF INDEX(Opts<1>, 'T', 1) THEN Trace = 1 ELSE Trace = 0
+      IF Trace THEN CRT 'Params=':R.PARMS
+*
+      Hdg1 = ',,,Curr,,,,,Av Bytes,Av Bytes,,,,New'
+      Hdg2 = 'VOC Entry,Account,File Name,Type,Mod,Sep,Bytes,Items,/Group,/Item,,,,Type,Mod,Sep,,,,Comments'
+*
+      RETURN
+*
+Main:
+*
+      WRITESEQ Hdg1 ON LogFile ELSE CRT 'WRITESEQ error!'
+      WRITESEQ Hdg2 ON LogFile ELSE CRT 'WRITESEQ error!'
 *
       LISTNAME = "ResizeList"
-      EXECUTE 'SSELECT VOC WITH F1 LIKE F...' RTNLIST LIST1
+      IF NOT(SYSTEM(11)) THEN
+         SelCmnd = 'SSELECT VOC WITH F1 LIKE F...'
+         IF IncludeQ THEN SelCmnd := ' OR WITH F1 LIKE Q...'
+         IF Trace THEN CRT 'SELECT Cmnd=':SelCmnd
+         EXECUTE SelCmnd
+      END
 *
-      LOOP WHILE READNEXT ID FROM LIST1 DO
+      LOOP WHILE READNEXT FileName DO
+         CRT FileName
          Ignore=0
-         FOR X = 1 TO 7
-            IF INDEX(ID,Rubbish<1,X>,1) THEN Ignore=1
-         NEXT X
-         IF ID NE OCONV(ID,"MCU") THEN Ignore=1
+         FOR IgNo = 1 TO IgnoreCt
+            IF INDEX(FileName,IgnoreList<1,IgNo>,1) THEN Ignore=1
+         NEXT IgNo
          IF NOT(Ignore) THEN
-            READ REC FROM VOCFIL,ID THEN
-               IF REC<2>[1,1] NE "/" THEN
-                  CRT ID
-                  OPEN ID TO OPEN.FILE THEN
-                     STATUS FILESTAT FROM OPEN.FILE THEN
-                        IF FILESTAT<21>="18" THEN
-                           NEWLIST<-1>=ID
-                           COUNT+=1
+            READ VOCRec FROM VOCFIL,FileName THEN
+               IF VOCRec<2>[1,1] NE "/" AND NOT(INDEX(VOCRec<2>, '!', 1)) THEN
+                  OPEN FileName TO FileVar THEN
+                     STATUS FileStats FROM FileVar THEN
+                        SCt = DCOUNT(FilePath, '/')
+                        Account = FIELD(FilePath, '/', SCt-1)
+                        RealFileName = FIELD(FilePath, '/', SCt)
+                        IncludeAcc = 0
+                        IF IncludeAccList = '*' THEN
+                           IncludeAcc = 1
+                        END ELSE
+                           LOCATE(Account, IncludeAccList, 1; Dummy) THEN IncludeAcc = 1
                         END
+                        IF IncludeAcc THEN
+                           IF NOT(INDEX(FilePath, '!', 1)) AND FileName = RealFileName THEN
+*                          not looking at remote files or synonyms
+                              CalcOpts = Opts
+                              CALL ResizeCalc(FileName, FileStats, FSRec, CalcOpts)
+                              IF FSRec # '' THEN
+                                 LogRec = EREPLACE(FSRec, @AM, ',')
+                                 WRITESEQ LogRec ON LogFile ELSE CRT 'WRITESEQ error!'
+                                 COUNT+=1
+                                 IF Trace THEN CRT '+++ added to list'
+                              END ELSE
+                                 IF Trace THEN CRT '- not a candidate for resizing'
+                              END
+                           END ELSE
+                              IF Trace THEN CRT '- ignoring synonyms and remote files'
+                           END
+                        END ELSE
+                           IF Trace THEN CRT '- Account ':Account:' not in included accounts: ':IncludeAccList
+                        END
+                     END ELSE
+                        IF Trace THEN CRT '- STATUS failed'
                      END
+                  END ELSE
+                     IF Trace THEN CRT '- open failed'
                   END
+               END ELSE
+                  IF Trace THEN CRT '- ignoring remote and absolute path files'
                END
             END
+         END ELSE
+            IF Trace THEN CRT '- in ignore list: ':IgnoreList
          END
       REPEAT
-      WRITELIST NEWLIST ON LISTNAME
-      CRT COUNT:" records written to ":LISTNAME
+      CRT COUNT:" records written to ":LogFilePath
 **
-      STOP
-**
-99000:*---- FILE OPEN ROUTINE -----
-      OPEN ONAME TO INAME ELSE
-         INAME = ""
-         SYSMES = "Cannot open ":ONAME:" FILE ":BELL
-         GOSUB 99999
+      RETURN
+*
+OpenLog:
+*
+      IF LogDir[LEN(LogDir),1] # '/' THEN LogDir := '/'
+      LogFilePath = LogDir:ThisAcc:'_ResizeList.csv'
+      OPENSEQ LogFilePath TO LogFile LOCKED
+         CRT LogFilePath:' is locked by another process - STOPPING!'
+         STOP
+      END ELSE
+         EXECUTE 'sh -c "> ':LogFilePath:'"'
+         OPENSEQ LogFilePath TO LogFile ELSE
+            CRT 'Cannot open ':LogFilePath:' - STOPPING!'
+            STOP
+         END
       END
-      RETURN
+      EXECUTE 'sh -c "> ':LogFilePath:'"'
 *
-99999:***** SYSTEM MESSAGE ROUTINE *****
-*
-      X=INT((76-LEN(SYSMES))/2)
-      PRINT @(X,22):SYSMES:
-      INPUT ANS,5
-      PRINT @(0,22):@(-4)
       RETURN
-   END

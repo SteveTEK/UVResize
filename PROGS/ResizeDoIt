@@ -1,243 +1,266 @@
 ****************************************************************
 * TITLE       : RESIZER
-* FUNCTION    : Resize files based on info from HASH.AID.FILE.
+* FUNCTION    : Resize files based on info from csv file.
 * DATE        : 7/11/96
 * AUTHOR      : sjh
-* REV DETAILS : Should be run after ResizeBuildList + ResizeGetStats 
-*               which clears + updates hash.aid.file
+* REV DETAILS : Should be run after ResizeBuildList
 **ned   10859  sjh  10/09/02
 ***************************************************************
 *
-   TCL = @SENTENCE
-   IF INDEX(TCL, 'TEST', 1) THEN TEST = 1 ELSE TEST = 0
-   GOSUB Init
-   IF ErrMess = '' THEN GOSUB Main
-   STOP
+      equ VOCId TO RzRec<1>
+      equ Account TO RzRec<2>
+      equ FileName TO RzRec<3>
+      equ OldType TO RzRec<4>
+      equ OldMod TO RzRec<5>
+      equ OldSep TO RzRec<6>
+      equ Bytes TO RzRec<7>
+      equ Items TO RzRec<8>
+      equ NewType TO RzRec<14>
+      equ NewMod TO RzRec<15>
+      equ NewSep TO RzRec<16>
+*
+      GOSUB Init
+      IF OKToStart THEN
+         GOSUB GetResizeList
+         IF ErrMess = '' THEN
+            GOSUB Main
+         END ELSE
+            CRT ErrMess
+         END
+      END
+      STOP
 *
 Init:
-   PROMPT ""
-   HALF = @(-7)
-   FULL = @(-8)
-   BELL = CHAR(7)
-   ErrMess = ""
-   Today = DATE()
-   TotalBytes = 0
-   TotalTime = 0
-   CurrentAverage = "10000"                    ;* set starting avg bytes per second
-   *
-   EQUATE DataBytes TO HAFREC<2>
-   EQUATE Items TO HAFREC<1>
-   Days = 'Mon' : @AM : 'Tue' : @AM : 'Wed' : @AM : 'Thu' : @AM : 'Fri' : @AM : 'Sat' : @AM : 'Sun'
-   *
-
-   ONAME = "HASH.AID.FILE"; GOSUB OpenFile; HAFFIL = INAME
-   IF ErrMess NE "" THEN
-      CRT ErrMess
-      CRT 'You probably need to run "ResizeGetStats", which will build HASH.AID.FILE'
-      STOP
-   END
-   ONAME = "HASH.AID.HIST"; GOSUB OpenFile; HAHFIL = INAME
-   IF ErrMess NE "" THEN
-      EXECUTE "CREATE-FILE HASH.AID.HIST 18 37 1"
-      GOSUB OpenFile
-      HAHFIL = INAME
-   END
-   ONAME = "UV.ACCOUNT"; GOSUB OpenFile; UVAFIL = INAME
-   IF ErrMess NE "" THEN
-      EXECUTE "SET-FILE UV UV.ACCOUNT UV.ACCOUNT"
-      GOSUB OpenFile
-      UVAFIL = INAME
-   END
-   PARMSOpen = 1
-   OPEN 'PARMS' TO PARFL ELSE PARMSOpen = 0
-   *
-   IF ErrMess = '' THEN
-      IF PARMSOpen THEN
-         READ RSZPAR FROM PARFL, 'RESIZE.PAR' ELSE RSZPAR = ''
-      END ELSE RSZPAR = ''
-      IF RSZPAR<1> = '' THEN
-         RSZPAR<1> = "79200,79200,79200,79200,79200,54000"
-         RSZPAR<2> = "21600,21600,21600,21600,21600"
+*
+      ErrMess = ''
+      PROMPT ""
+      HALF = @(-7)
+      FULL = @(-8)
+      BELL = CHAR(7)
+      ErrMess = ""
+      Today = DATE()
+      TotalBytes = 0
+      TotUsedTime = 0
+*
+      Days = 'Mon':@AM:'Tue':@AM:'Wed':@AM:'Thu':@AM:'Fri':@AM:'Sat':@AM:'Sun'
+*
+      Sent = FIELD(@SENTENCE, '|', 1)
+      IF FIELD(Sent, ' ', 2) = 'UPDATE' THEN Update = 1 ELSE Update = 0
+      ThisAcc = @WHO
+      BaseAcc = FIELD(Sent, ' ', 3)
+      IF BaseAcc = '' THEN BaseAcc = ThisAcc
+      RunOpts = FIELD(@SENTENCE, '|', 2)
+      RunOpts = EREPLACE(RunOpts, ',', @AM)
+      ParFilNm = RunOpts<1>
+      If ParFilNm = '' THEN ParFilNm = 'PARMS'
+      RunAsDOW = RunOpts<2>
+*
+      OPEN ParFilNm TO F.PARMS THEN
+         READ R.PARMS FROM F.PARMS, 'Resize' ELSE R.PARMS = ''
+      END ELSE R.PARMS = ''
+      *
+      IF R.PARMS<1> = '' THEN
+         R.PARMS<1> = "7200,7200,7200,7200,7200"
+         R.PARMS<2> = "21600,21600,21600,21600,21600"
       END
-      RSZPAR<1> = EREPLACE(RSZPAR<1>, ',', @VM)
-      RSZPAR<2> = EREPLACE(RSZPAR<2>, ',', @VM)
-      IF RSZPAR<3> = '' THEN
-         RSZPAR<3> = '/tmp/resize.log'
-      END
-      Logging = 1
-      OPENSEQ RSZPAR<3> TO LogFile ELSE
-         EXECUTE 'sh -c "> ' : RSZPAR<3> : '"'
-         OPENSEQ RSZPAR<3> TO LogFile ELSE Logging = 0
-      END
-      DOW = OCONV(DATE(), "DW")
+      StartTimes = EREPLACE(R.PARMS<1>, ',', @VM)
+      EndTimes = EREPLACE(R.PARMS<2>, ',', @VM)
+      LogDir = R.PARMS<3>
+      IF LogDir = '' THEN LogDir = '/tmp'
+      ListName = BaseAcc:'_ResizeList.csv'
+      CurrentAverage = R.PARMS<4>        ; * set starting avg bytes per second
+      IF CurrentAverage < 1 THEN CurrentAverage = 100000
+*
+      IF RunAsDOW # '' AND NOT(Update) THEN
+         DOW = RunAsDOW
+      END ELSE DOW = OCONV(DATE(), "DW")
       StartDOW = DOW
-      CRT 'RESIZE.PAR'
-      CRT '  DOW   Start   End'
+      CRT 'Available Times':SPACE(40):'Mode: ':
+      IF Update THEN CRT 'Update' ELSE CRT 'Testing'
+      CRT '  Day   Start   End'
       FOR Z = 1 TO 7
          IF Z = DOW THEN TDFLAG = '*' ELSE TDFLAG = ' '
-         CRT TDFLAG 'L#3' : Z 'L#3' : OCONV(RSZPAR<1, Z>, 'MTS') 'L#9' : OCONV(RSZPAR<2, Z>, 'MTS') 'L#9'
+         CRT TDFLAG 'L#2' : Days<Z> 'L#4' : OCONV(StartTimes<1, Z>, 'MTS') 'L#9' : OCONV(EndTimes<1, Z>, 'MTS') 'L#9'
       NEXT Z
-   END
-   *
-   RETURN
+      CRT
+      CRT 'Notes.'
+      CRT '1. Start Time can be later than End Time, to allow overnight runs - in which case'
+      CRT '   the End Time used will be from the following day.'
+      CRT '2. You can also put "-" in Start Time, to prevent running on a day.'
+      CRT '3. Blank time = midnight. If Start & End are both blank, all day run is assumed.'
+      CRT '4. The default times can be over-ridden by setting up a "Resize" parameter'
+      CRT
+      *
+      OKToStart = 0
+      CurrTime = TIME()
+      StartOfDay = StartTimes<1, DOW>
+      IF StartOfDay = '-' THEN
+         CRT Days<DOW>:' start of day = "-", so not running'
+      END ELSE
+         EndDOW = DOW
+         TotAvailTime = 0
+         IF EndTimes # '' THEN
+            EndOfTimes = 0
+            LOOP
+               STm = StartTimes<1,EndDOW>
+               ETm = EndTimes<1, EndDOW>
+               BEGIN CASE
+                  CASE EndDOW # DOW AND STm # ''
+                     TotAvailTime = TotAvailTime + ETm
+                     EndOfTimes = 1
+                  CASE ETm = ''
+                     TotAvailTime = TotAvailTime + 86400
+                  CASE ETm # '' AND ETm < STm
+                     TotAvailTime = TotAvailTime + (86400 - STm)
+                  CASE 1
+                     TotAvailTime = TotAvailTime + ETm - STm
+                     EndOfTimes = 1
+               END CASE
+            UNTIL EndOfTimes
+               EndDOW = EndDOW + 1
+               IF EndDOW > 7 THEN EndDOW = 1
+            REPEAT
+         END
+*
+         StartOfDay = StartTimes<1, DOW>
+         EndOfDay = EndTimes<1, DOW>
+         BEGIN CASE
+            CASE CurrTime < StartOfDay
+               CRT 'Time is now: ' : OCONV(TIME(), 'MTS') : ', Sleeping until: ' : OCONV(StartOfDay, 'MTS')
+               IF Update THEN
+                  EXECUTE 'SLEEP ' : OCONV(StartOfDay, 'MTS')
+                  OKToStart = 1
+               END
+            CASE CurrTime > EndOfDay AND EndOfDay > 0
+               CRT 'Window missed'
+            CASE 1
+               CRT 'Starting now.'
+               OKToStart = 1
+         END CASE
+      EndOfDay = EndTimes<1, EndDOW>
+      CRT 'Window: ':Days<StartDOW>:' ':OCONV(StartOfDay+0, 'MTS'):' to ':Days<EndDOW>:' ':OCONV(EndOfDay, 'MTS')
+      CRT 'Total available time = ' : OCONV(TotAvailTime, 'MTS') : ' (' : TotAvailTime : ')'
+      CRT
+*
+!!!         CRT 'Using: ':LogDir:'/':ListName
+      END
+*
+      RETURN
 *
 Main:
-   IF TEST THEN
-      StartOfDay = TIME()
-   END ELSE StartOfDay = RSZPAR<1, DOW>
-   AvailableTime = 0 - StartOfDay
-   EndDOW = DOW
-   IF RSZPAR<2> # '' THEN
+*
+      RequiredTime = 0
+      ResizeCt = DCOUNT(ResizeList, @AM)
+      RzNo = 2                           ; * first 2 lines are column headings
       LOOP
-         IF RSZPAR<2, EndDOW> # '' THEN
-            AvailableTime = AvailableTime + RSZPAR<2, EndDOW>
-         END ELSE AvailableTime = AvailableTime + 86400
-      UNTIL RSZPAR<2, EndDOW> # '' DO
-         EndDOW = EndDOW + 1
-         IF EndDOW > 7 THEN EndDOW = 1
-      REPEAT
-   END
-   EndOfDay = RSZPAR<2, DOW>
-   StartTime = TIME()
-   IF StartTime < StartOfDay THEN
-      CRT 'Time is now: ' : OCONV(TIME(), 'MTS') : ', Sleeping until: ' : OCONV(StartOfDay, 'MTS')
-      IF NOT (TEST) THEN
-         EXECUTE 'SLEEP ' : OCONV(StartOfDay, 'MTS')
-      END
-   END
-   * process each file held in HASH.AID.FILE
-   IF NOT(SYSTEM(11)) THEN SELECT HAFFIL
-   CRT 'Start: ' : Days<StartDOW> : ' ' : OCONV(StartOfDay, 'MTS') : ', End: ' : Days<EndDOW> : ' ' : OCONV(EndOfDay, 'MTS')
-   CRT 'Total available time = ' : OCONV(AvailableTime, 'MTS') : ' (' : AvailableTime : ')'
-   CRT
-   EOL = 0
-   RequiredTime = 0
-   ElapsedTime = 0
-   LOOP
-      StartTime = TIME()
-      READNEXT HAFKEY ELSE EOL = 1
-      !!!      UNTIL EOL OR (StartTime>EndOfDay AND NOT(TEST)) DO
-   UNTIL EOL OR ((AvailableTime - ElapsedTime) < 1 AND NOT (TEST)) DO
-      READ HAFREC FROM HAFFIL, HAFKEY THEN
-         IF Items GT 0 THEN
-            ZD = OCONV(DATE(), "DW")
-            CRT Days<ZD> : ' ' : OCONV(StartTime, "MTS") : " " : HAFKEY "L#30"
-            GOSUB CalcModSep                   ;* work out new mod/sep
+         CurrTime = TIME()
+         RzNo += 1
+      UNTIL (RzNo > ResizeCt) OR ((TotAvailTime - TotUsedTime) < 1 AND Update) DO
+         RzRec = EREPLACE(ResizeList<RzNo>, ',', @AM)
+         IF Account = ThisAcc THEN
+            ThisDOW = OCONV(DATE(), "DW")
+            CRT FileName:' - resizing from ':OldType:',':OldMod:',':OldSep:' to ':NewType:',':NewMod:',':NewSep
+            RzCmnd = 'RESIZE ':FileName:' ':NewType:' ':NewMod:' ':NewSep
             OK = 0
-            GOSUB TimeCheck                    ;* check to see if enough time
-            IF OK THEN
-               IF TEST THEN
-                  CRT '   Test mode - no action taken'
+            GOSUB TimeCheck              ; * check to see if enough time
+            IF OK OR NOT(Update) THEN
+               IF NOT(Update) THEN
+                  CRT '    Test mode - command = ':RzCmnd
                END ELSE
-                  EXECUTE "RESIZE " : FileName : " " : NewType : " " : NewMod : " " : NewSep
-                  GOSUB DisplayTimes           ;* calculate times
-                  GOSUB UpdateHAH              ;* update HASH.AID.HIST
+                  EXECUTE RzCmnd CAPTURING Stuff
+                  GOSUB DisplayTimes     ; * calculate times
                   CRT
                END
             END ELSE
                CRT '   skipped - insufficient time'
             END
+         END ELSE
+            CRT Account:' ':FileName:' skipped. Not in This account (':ThisAcc:')'
          END
-      END
-   REPEAT
-   *
-   RETURN
+      REPEAT
+      *
+      RETURN
 *
 *-----------------subroutines----------------------*
 *
-CalcModSep: * work out new modulo & separation
-   *
-   NO.OF.STARS = DCOUNT(HAFKEY, "*")
-   FileName = FIELD(HAFKEY, "*", NO.OF.STARS - 3, 1)
-   CurrentType = FIELD(HAFKEY, "*", NO.OF.STARS - 2, 1)
-   CurrentMod = FIELD(HAFKEY, "*", NO.OF.STARS - 1, 1)
-   CurrentSep = FIELD(HAFKEY, "*", NO.OF.STARS, 1)
-   NewType = CurrentType
-   *
-   AverageRecSize = INT(DataBytes / Items)
-   NewSep = INT((AverageRecSize + 511) / 512)
-   NewMod = INT(AverageRecSize * Items / (400 * NewSep) + 1)
-   * above value modified to 400 from 512 to allow growth ikg
-   EXECUTE "PRIME " : NewMod CAPTURING OUTPUT
-   NewMod = FIELD(OUTPUT, ":", 3, 1)
-   NewMod = OCONV(NewMod, "MCN")
-   TotalBytes += DataBytes
-   *
-   CRT "   AV=" : AverageRecSize : " NewSep=" : NewSep :
-   CRT " NewMod=" : NewMod : " SIZE=" : DataBytes : " Items=" : Items
-   RETURN
+DisplayTimes:* display times
+      *
+      EndTime = TIME()
+      ResizeTime = EndTime - CurrTime
+      IF ResizeTime LT 0 THEN ResizeTime = ResizeTime * -1
+      TotUsedTime += ResizeTime
+      IF TotUsedTime < 1 THEN TotUsedTime = 1
+      TotalBytes += Bytes
+      CurrentAverage = INT(TotalBytes / TotUsedTime)
+      *
+      DISPLAY.TIME = "   processed in " : OCONV(ResizeTime, "MTS") : ", total time = " : OCONV(TotUsedTime, "MTS")
+      DISPLAY.TIME2 = "   Current average = " : CurrentAverage : " bytes per second."
+      CRT DISPLAY.TIME
+      CRT DISPLAY.TIME2
+      CRT
+      RETURN
 *
-UpdateHAH: * update HASH.AID.HIST
-   *
-   READ HAHREC FROM HAHFIL, FileName ELSE HAHREC = ""
-   HAHREC = INSERT(HAHREC, 1, 1; NewType)
-   HAHREC = INSERT(HAHREC, 2, 1; NewMod)
-   HAHREC = INSERT(HAHREC, 3, 1; NewSep)
-   HAHREC = INSERT(HAHREC, 4, 1; CurrentType)
-   HAHREC = INSERT(HAHREC, 5, 1; CurrentMod)
-   HAHREC = INSERT(HAHREC, 6, 1; CurrentSep)
-   HAHREC = INSERT(HAHREC, 7, 1; Today)
-   HAHREC = INSERT(HAHREC, 8, 1; StartTime)
-   HAHREC = INSERT(HAHREC, 9, 1; EndTime)
-   HAHREC = INSERT(HAHREC, 10, 1; DataBytes)
-   HAHREC = INSERT(HAHREC, 11, 1; Items)
-   WRITE HAHREC ON HAHFIL, FileName
-   RETURN
-**
-DisplayTimes: * display times
-   *
-   EndTime = TIME()
-   ElapsedTime = EndTime - StartTime
-   IF ElapsedTime LT 0 THEN ElapsedTime = ElapsedTime * -1
-   TotalTime += ElapsedTime
-   IF TotalTime < 1 THEN TotalTime = 1
-   CurrentAverage = INT(TotalBytes / TotalTime)
-   *
-   DISPLAY.TIME = FileName : " processed in " : OCONV(ElapsedTime, "MTS") : ", total time = " : OCONV(TotalTime, "MTS")
-   DISPLAY.TIME2 = "   Current average = " : CurrentAverage : " bytes per second."
-   CRT DISPLAY.TIME2
-   CRT '   ' : OCONV(EndTime, "MTS") : " " : DISPLAY.TIME
-   CRT
-   RETURN
+TimeCheck:* check if enough time to process next file
 *
-TimeCheck: * check if enough time to process next file
-   CURR.DOW = OCONV(DATE(), "DW")
-   IF CURR.DOW < StartDOW THEN CURR.DOW = CURR.DOW + 7
-   ElapsedTime = ((CURR.DOW - StartDOW) * 86400) - StartOfDay + TIME()
-   RequiredTime = INT(DataBytes / CurrentAverage)
-   OK = 0
-   EstimatedEndTime = INT(DataBytes / CurrentAverage) + TIME()
-   IF EstimatedEndTime > 86400 THEN
-      EstimatedEndTime = EstimatedEndTime - 86400
-      *        New day
-      DOW = DOW + 1
-      IF DOW > 7 THEN DOW = 1
-      EndOfDay = RSZPAR<2, DOW>
-      IF EndOfDay = '' THEN
-         IF DOW = 7 THEN NEXTDOW = 1 ELSE NEXTDOW = DOW + 1
-         NextEndOfDay = RSZPAR<2, NEXTDOW>
-         IF NextEndOfDay = '' THEN NextEndOfDay = 86400
-         EndOfDay = 86400 + NextEndOfDay
+      CURR.DOW = OCONV(DATE(), "DW")
+      IF CURR.DOW < StartDOW THEN CURR.DOW = CURR.DOW + 7
+!!!      ElapsedTime = ((CURR.DOW - StartDOW) * 86400) - StartOfDay + TIME()
+      RequiredTime = INT(Bytes / CurrentAverage)
+      OK = 0
+      EstimatedEndTime = INT(Bytes / CurrentAverage) + TIME()
+      IF EstimatedEndTime > 86400 THEN
+         EstimatedEndTime = EstimatedEndTime - 86400
+         *        New day
+         DOW = DOW + 1
+         IF DOW > 7 THEN DOW = 1
+         EndOfDay = EndTimes<1, DOW>
+         IF EndOfDay = '' THEN
+            IF DOW = 7 THEN NEXTDOW = 1 ELSE NEXTDOW = DOW + 1
+            NextEndOfDay = EndTimes<1, NEXTDOW>
+            IF NextEndOfDay = '' THEN NextEndOfDay = 86400
+            EndOfDay = 86400 + NextEndOfDay
+         END
       END
-   END
-   IF RequiredTime < (AvailableTime - ElapsedTime) THEN OK = 1 ELSE OK = 0
-   CRT "   Time required: " : RequiredTime : ", remaining: " : (AvailableTime - ElapsedTime)
-   RETURN
+      IF RequiredTime < (TotAvailTime - TotUsedTime) THEN OK = 1 ELSE OK = 0
+      TimeLine = '   Start Time: ':Days<ThisDOW>:' ':OCONV(CurrTime, 'MTS')
+      TimeLine := ', Tot Avail: ':OCONV(TotAvailTime, 'MTS')
+      TimeLine := ', Tot Used: ':OCONV(TotUsedTime, 'MTS')
+      TimeLine := ', Remaining: ':OCONV((TotAvailTime - TotUsedTime), 'MTS')
+      TimeLine := ', Required: ':OCONV(RequiredTime, 'MTS')
+      CRT TimeLine
+      RETURN
 *
 *
-OpenFile: *---- FILE OPEN ROUTINE -----
-   OPEN ONAME TO INAME ELSE
-      INAME = ""
-      ErrMess = "Cannot open " : ONAME : " FILE " : BELL
-      GOSUB 99999
-   END
-   RETURN
+99999:***** SYSTEM MESSAGE ROUTINE *****
+      *
+      X = INT((76 - LEN(ErrMess)) / 2)
+      PRINT @(X, 22) : ErrMess :
+      INPUT ANS, 5
+      PRINT @(0, 22) : @(-4)
+      RETURN
 *
-99999: ***** SYSTEM MESSAGE ROUTINE *****
-   *
-   X = INT((76 - LEN(ErrMess)) / 2)
-   PRINT @(X, 22) : ErrMess :
-   INPUT ANS, 5
-   PRINT @(0, 22) : @(-4)
-   RETURN
-END
+GetResizeList:
+*
+      OPENPATH LogDir TO F.LogDir THEN
+         READ ResizeList FROM F.LogDir, ListName THEN
+         END ELSE
+            ErrMess = ListName:' not found in ':LogDir
+         END
+      END ELSE
+         ErrMess = 'Cannot open ':LogDir:' - STOPPING!'
+      END
+*
+      RETURN
+*
+OpenLog:
+*
+      IF LogDir[LEN(LogDir),1] # '/' THEN LogDir := '/'
+      ListFilePath = LogDir:BaseAcc:'_ResizeList.csv'
+      OPENSEQ ListFilePath TO ListFile LOCKED
+         ErrMess = ListFilePath:' is locked by another process - STOPPING!'
+      END ELSE
+         ErrMess = 'Cannot open ':ListFilePath:' - STOPPING!'
+      END
+*
+      RETURN
+*
