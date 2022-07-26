@@ -1,0 +1,455 @@
+*
+*
+      GOSUB Init
+      GOSUB GetWords
+      IF cookie = '' THEN
+         GOSUB Help
+      END ELSE
+         GOSUB LeaderBoard
+      END
+      GOSUB DisplayGrid
+      IF GuessList # '' THEN
+         NapTime = RefreshNapTime
+         GuessCt = DCOUNT(GuessList, @am)
+         IF GuessCt > 6 THEN GuessCt = 6
+         FOR GuessNo = 1 TO GuessCt
+            Guess = GuessList<GuessNo>
+            GOSUB DisplayResult
+         NEXT GuessNo
+         GuessNo = GuessCt
+         GOSUB DisplayLetters
+         NapTime = PlayNapTime
+      END ELSE
+         GuessNo = 0
+         NapTime = PlayNapTime
+      END
+      GOSUB GetGuesses
+*
+      CRT @(-3):'Press [ENTER] to exit; or "S" for shareable version. ':
+      INPUT DUMMY
+      DUMMY = OCONV(DUMMY, 'MCU')
+      IF DUMMY = 'S' THEN
+         Share = 1
+         GuessCt = DCOUNT(GuessList, @am)
+         IF GuessCt > 6 THEN GuessCt = 6
+         NapTime = RefreshNapTime
+         FOR GuessNo = 1 TO GuessCt
+            Guess = GuessList<GuessNo>
+            GOSUB DisplayResult
+         NEXT GuessNo
+      END
+      STOP
+*
+Init:
+*
+      EQU GOn TO @(-39)
+      EQU GOff TO @(-40)
+      EQU HLine TO @(-41,1)
+      EQU VLine TO @(-41,2)
+      EQU TopLeft TO @(-41,3)
+      EQU TopRight TO @(-41,4)
+      EQU BotLeft TO @(-41,5)
+      EQU BotRight TO @(-41,6)
+      EQU TopT TO @(-41,7)
+      EQU LeftT TO @(-41,8)
+      EQU RightT TO @(-41,9)
+      EQU BotT TO @(-41,10)
+      EQU Cross TO @(-41,11)
+      EQU RevOn TO @(-13)
+      EQU RevOff TO @(-14)
+      EQU BoldOn TO @(-58)
+      EQU BoldOff TO @(-59)
+*
+      ColGrid = CHAR(27):'[30;47m'
+      ColBingo = CHAR(27):'[37;42m'
+      ColClose = CHAR(27):'[37;44m'
+      ColMiss = CHAR(27):'[30;47m'
+      ColUnused = CHAR(27):'[37;40m'
+      ColReset = CHAR(27):'[39;49m'
+*
+      PROMPT ''
+      LetterList = ''
+      FOR L = 65 TO 90
+         LetterList<1,L-64> = CHAR(L)
+      NEXT L
+      StartCol = 29
+      StartRow = 2
+      Width = 4
+      Depth = 11
+      PlayNapTime = 50
+      RefreshNapTime = 10
+*
+      Share = 0
+      cookie = ''
+      GuessList = ''
+      cookieOpen = 1
+      OPEN 'WORDLE.WORK' TO F.WORDLE.WORK ELSE
+         EXECUTE 'CREATE-FILE WORDLE.WORK 1,1,18 31,1,18' CAPTURING Stuff
+         OPEN 'WORDLE.WORK' TO F.WORDLE.WORK ELSE cookieOpen = 0
+      END
+      IF cookieOpen THEN
+         READ R.PARMS FROM F.WORDLE.WORK, 'CONTROL' ELSE R.PARMS = ''
+      END ELSE R.PARMS = ''
+      LBElapse = R.PARMS<1>
+      IF LBElapse < 1 THEN LBElapse = 7
+      Today = DATE()
+*
+      Opts = FIELD(@SENTENCE, '|', 2)
+      Opts = EREPLACE(Opts, ',', @am)
+      OldDt = Opts<1>
+      TestWord = Opts<2>
+      IF TestWord = '' THEN
+         IF OldDt # '' THEN
+            Dt = ICONV(OldDt, 'D')
+            IF Dt > Today OR (Dt + 0) = 0 THEN Dt = Today
+         END ELSE
+            Dt = Today
+         END
+      END ELSE Dt = TestWord
+      Login = @LOGNAME
+      I.GuessList = Login:'_':Dt
+      IF cookieOpen THEN
+         READ cookie FROM F.WORDLE.WORK, Login ELSE cookie = ''
+         READ GuessList FROM F.WORDLE.WORK, I.GuessList ELSE GuessList = ''
+      END
+      RETURN
+*
+GetWords:
+*
+      OPENPATH '/usr1/develop' TO F.dir THEN
+         READ WordList FROM F.dir, '5letter.words' ELSE WordList = ''
+      END ELSE WordList = ''
+      IF WordList = '' THEN
+         shCmnd = 'grep -E "^[a-z]{5}$" /usr/share/dict/linux.words'
+         EXECUTE "sh -c '":shCmnd:"'" CAPTURING WordList
+      END
+      WordCt = DCOUNT(WordList, @am)
+      IF TestWord = '' THEN
+*
+*     word list is alphabetical, so reverse date digits to ensure hash to non-sequential words
+         BDt = Dt[5,1]:Dt[4,1]:Dt[3,1]:Dt[2,1]:Dt[1,1]
+         WordNo = MOD(BDt,WordCt)
+         IF WordNo = 0 THEN WordNo = WordCt
+         Word = OCONV(WordList<WordNo>, 'MCU')
+      END ELSE Word = TestWord
+*
+      RETURN
+*
+*
+DisplayGrid:
+*
+      CRT @(0,0):@(-1):
+      Col = StartCol
+      Row = StartRow
+      TopLine = ColGrid:GOn:TopLeft:STR(HLine:HLine:HLine:TopT,Width):HLine:HLine:HLine:TopRight:GOff:ColReset
+      MidLine = ColGrid:GOn:LeftT:STR(HLine:HLine:HLine:Cross,Width):HLine:HLine:HLine:RightT:GOff:ColReset
+      BotLine = ColGrid:GOn:BotLeft:STR(HLine:HLine:HLine:BotT,Width):HLine:HLine:HLine:BotRight:GOff:ColReset
+      BoxLine = ColGrid:GOn:VLine:GOff:'   ':GOn:VLine:GOff:'   ':GOn:VLine:GOff:'   ':GOn:VLine:GOff:'   ':GOn:VLine:GOff:'   ':GOn:VLine:GOff:ColReset
+      CRT @(Col,Row):TopLine
+      For RowNo = 1 TO 5
+         Row += 1
+         CRT @(Col,Row):BoxLine
+         Row += 1
+         CRT @(Col,Row):MidLine
+      NEXT RowNo
+      Row += 1
+      CRT @(Col,Row):BoxLine
+      Row += 1
+      CRT @(Col,Row):BotLine
+      CRT
+*
+      RETURN
+*
+GetGuesses:
+*
+      ExitProg = 0
+      IF GuessNo < 1 THEN HitCt = 0
+      LOOP
+         GuessNo += 1
+      UNTIL GuessNo > 6 OR HitCt = 5 OR ExitProg DO
+         ValidGuess = 0
+         LOOP
+            HitCt = 0
+            CRT @(10,20):@(-4):'Enter a 5-letter word, [ENTER] to quit or "?" for Help ':
+            INPUT Guess
+            Guess = OCONV(Guess, 'MCU')
+            LGuess = OCONV(Guess, 'MCL')
+            LOCATE(LGuess, WordList; Dummy) THEN ValidGuess = 1 ELSE ValidGuess = 0
+            BEGIN CASE
+               CASE Guess = ''
+                  ExitProg = 1
+               CASE Guess = '?'
+                  GOSUB Help
+                  GOSUB DisplayGrid
+                  IF GuessList # '' THEN
+                     GuessCt = DCOUNT(GuessList, @am)
+                     IF GuessCt > 6 THEN GuessCt = 6
+                     NapTime = RefreshNapTime
+                     FOR GuessNo = 1 TO GuessCt
+                        Guess = GuessList<GuessNo>
+                        GOSUB DisplayResult
+                     NEXT GuessNo
+                     NapTime = PlayNapTime
+                     GuessNo = GuessCt
+                     GOSUB DisplayLetters
+                  END ELSE GuessNo = 0
+                  GuessNo += 1
+               CASE ValidGuess
+                  GOSUB DisplayResult
+                  GOSUB DisplayLetters
+                  GuessList<GuessNo> = Guess
+                  WRITEV Guess ON F.WORDLE.WORK, I.GuessList, GuessNo ELSE NULL
+               CASE 1
+                  CRT @(10,20):@(-4):Guess:' is not a valid word. Try again.':
+                  INPUT Dummy
+            END CASE
+         UNTIL ValidGuess OR ExitProg DO
+         REPEAT
+      REPEAT
+      GuessNo -= 1
+*
+      LOCATE(Dt, cookie,1; DPos) ELSE
+         cookie<1,-1> = Dt
+         DPos = DCOUNT(cookie<1>, @vm)
+      END
+      IF HitCt > 4 THEN
+         cookie<2,DPos> = GuessNo
+      END ELSE
+         cookie<2,DPos> = 0
+      END
+      WRITE cookie ON F.WORDLE.WORK, Login ELSE NULL
+      GOSUB Stats
+      BEGIN CASE
+         CASE ExitProg
+            CRT @(0,20):@(-4):'BYE. Just re-run WORDLE to pick up where you left off'
+         CASE HitCt > 4
+            CRT @(0,20):@(-4):'Well done you got it in ':GuessNo:' tries'
+         CASE GuessNo > 5
+            CRT @(0,20):@(-4):"You are out of tries. Do you want to see today's WORDLE? ":
+            INPUT YN
+            IF YN = 'Y' OR YN = 'y' THEN
+               CRT @(0,21):@(-4):"Today's WORDLE is ":Word
+            END
+      END CASE
+      RETURN
+*
+DisplayResult:
+*
+      HitList = ''
+      Offset = (GuessNo * 2) - 1
+      Y = StartRow + Offset
+      X = StartCol
+*
+*     1st pass - check for hits
+      FOR GuessLetterNo = 1 TO 5
+         GLetter = Guess[GuessLetterNo,1]
+         FOR WordLetterNo = 1 TO 5
+            WLetter = Word[WordLetterNo,1]
+            BEGIN CASE
+               CASE GLetter = WLetter AND GuessLetterNo = WordLetterNo
+                  HitList<1,GuessLetterNo> = GLetter
+                  HitList<2,GuessLetterNo> = 2
+               CASE GLetter = WLetter AND HitList<2,GuessLetterNo> < 2
+                  HitList<1,GuessLetterNo> = GLetter
+                  HitList<2,GuessLetterNo> = 1
+               CASE HitList<2,GuessLetterNo> < 1
+                  HitList<1,GuessLetterNo> = GLetter
+                  HitList<2,GuessLetterNo> = 0
+            END CASE
+         NEXT WordLetterNo
+      NEXT GuessLetterNo
+*
+*     2nd pass - sort out duplicate letters
+      FOR GuessLetterNo = 5 TO 1 STEP -1
+         GLetter = Guess[GuessLetterNo,1]
+         WLetterCt = COUNT(Word, GLetter)
+         GLetterCt = COUNT(Guess, GLetter)
+         Level = HitList<2,GuessLetterNo>
+         IF Level > 0 AND GLetterCt > WLetterCt THEN
+            FOR HNo = 1 TO 5
+               CheckLetter = HitList<1,HNo>
+               IF HNo # GuessLetterNo AND GLetter = CheckLetter THEN
+                  IF HitList<2,HNo> = 1 THEN HitList<2,HNo> = 0
+!!!IF @LOGNAME = 'shaddon' THEN
+!!!CRT @(0,18):@(-4):'Guess=':Guess:' GLNo=':GuessLetterNo:' GL=':GLetter:' HitList2=':HitList<2>
+!!!CRT @(0,19):@(-4):' HNo=':HNo:' CheckLetter=':CheckLetter:' WLetterCt=':WLetterCt:' GLetterCt=':GLetterCt
+!!!INPUT Dummy
+!!!END
+               END
+            NEXT HNo
+         END
+      NEXT GuessLetterNo
+*
+*     3rd pass - display results
+      HitCt = 0
+      FOR GuessLetterNo = 1 TO 5
+         Letter = HitList<1,GuessLetterNo>
+         Level = HitList<2,GuessLetterNo>
+         EffOn = ''
+         EffOff = ''
+         BEGIN CASE
+            CASE Level = 0
+               EffOn = ColMiss
+               EffOff = ColReset
+               LOCATE(Letter,LetterList,1;LLPos) THEN
+                  LetterList<2,LLPos> = '-'
+               END
+            CASE Level = 2
+               EffOn = ColBingo
+               EffOff = ColReset
+               LOCATE(Letter,LetterList,1;LLPos) THEN
+                  LetterList<2,LLPos> = 2
+                  HitCt += 1
+               END
+            CASE 1
+               EffOn = ColClose
+               EffOff = ColReset
+               LOCATE(Letter,LetterList,1;LLPos) THEN
+                  IF LetterList<2,LLPos> = '' THEN
+                     LetterList<2,LLPos> = 1
+                  END
+               END
+         END CASE
+         CRT @(X+(GuessLetterNo*4)-3,Y):EffOn:' ':EffOff:
+         NAP NapTime
+         CRT @(X+(GuessLetterNo*4)-2,Y):EffOn:' ':EffOff:
+         NAP NapTime
+         CRT @(X+(GuessLetterNo*4)-1,Y):EffOn:' ':EffOff:
+         NAP NapTime
+         IF Share THEN Letter = ' '
+         CRT @(X+(GuessLetterNo*4)-3,Y):EffOn:' ':Letter:' ':EffOff:
+      Next GuessLetterNo
+      CRT @(0,22):
+*
+      RETURN
+*
+DisplayLetters:
+*
+      CRT @(0,22):GOn:STR(HLine,79):GOff:
+      CRT @(0,24):GOn:STR(HLine,79):GOff:
+      CRT @(0,23):' ':
+      LCt = DCOUNT(LetterList<1>, @vm)
+      FOR L = 1 TO LCt
+         Letter = LetterList<1,L>
+         BEGIN CASE
+            CASE LetterList<2,L> = 2
+               EffOn = ColBingo
+               EffOff = ColReset
+            CASE LetterList<2,L> = 1
+               EffOn = ColClose
+               EffOff = ColReset
+            CASE LetterList<2,L> = '-'
+               EffOn = ''
+               EffOff = ''
+               EffOn = ColMiss
+               EffOff = ColReset
+            CASE 1
+               EffOn = ColUnused:BoldOn
+               EffOff = BoldOff:ColReset
+         END CASE
+         CRT EffOn:' ':Letter:' ':EffOff:
+      NEXT L
+*
+      RETURN
+*
+Help:
+*
+      CRT @(0,0):@(-1)
+      CRT @(10,0):BoldOn:'HOW TO PLAY':BoldOff
+      CRT @(10,2):'Guess the ':BoldOn:'WORDLE':BoldOff:' in six tries.'
+      CRT @(10,4):'Each guess must be a valid five-letter word. Hit the enter button to submit.'
+      CRT @(10,6):'After each guess, the color of the tiles will change to show how close your'
+      CRT @(10,7):'guess was to the word.'
+      CRT @(10,9):BoldOn:'Examples':BoldOff
+      CRT @(10,11):ColBingo:'W':ColReset:'EARY'
+      CRT @(10,12):'The letter ':BoldOn:'W':BoldOff:' is in the word and in the correct spot.'
+      CRT @(10,14):'P':ColClose:'I':ColReset:'LLS'
+      CRT @(10,15):'The letter ':BoldOn:'I':BoldOff:' is in the word but in the wrong spot.'
+      CRT @(10,17):'VAG':ColMiss:'U':ColReset:'E'
+      CRT @(10,18):'The letter ':BoldOn:'U':BoldOff:' is not in the word in any spot.'
+      CRT @(10,22):BoldOn:'A new WORDLE will be available each day!':BoldOff
+*
+      INPUT Dummy
+*
+      RETURN
+*
+Stats:
+*
+      CRT @(52,1):BoldOn:'STATISTICS':BoldOff
+      PlayCt = DCOUNT(cookie<2>, @vm)
+      FailCt = 0
+      StatArr = ''
+      FOR Play = 1 TO PlayCt
+         Tries = cookie<2,Play>
+         IF Tries > 0 THEN
+            StatArr<Tries> += 1
+         END ELSE FailCt += 1
+      NEXT Play
+*
+      CRT @(52,3):'Played: ':BoldOn:PlayCt:BoldOff:' Win %: ':BoldOn:((PlayCt - FailCt) / PlayCt * 100) 'R2':BoldOff
+      CRT @(52,5):'Guess Distribution'
+      FOR TCt = 1 TO 6
+         CRT @(52,5+TCt):TCt 'L##':StatArr<TCt>
+      NEXT TCt
+*
+      RETURN
+*
+LeaderBoard:
+*
+      EXECUTE 'SELECT WORDLE.WORK WITH @ID # "[_]" BY-DSND WinPcnt' CAPTURING Dummy
+      LBArr = ''
+      LBCt = 0
+      EOL = 0
+      LOOP
+         READNEXT K.WordleUser ELSE EOL = 1
+      UNTIL EOL DO
+         READ R.WordleUser FROM F.WORDLE.WORK, K.WordleUser THEN
+            PlayCt = DCOUNT(R.WordleUser<1>, @vm)
+            LastPlayDt = R.WordleUser<1,PlayCt>
+            IF (DATE() - LastPlayDt) < LBElapse THEN
+               FailCt = 0
+               WonCt = 0
+               Unfinished = 0
+               FOR Play = 1 TO PlayCt
+                  PlayDt = R.WordleUser<1,Play>
+                  Tries = R.WordleUser<2,Play>
+                  IF Tries > 0 THEN
+                     WonCt += 1
+                  END ELSE
+                     READ CheckRec FROM F.WORDLE.WORK, Login:'_':PlayDt ELSE CheckRec = ''
+                     IF DCOUNT(CheckRec, @am) < 6 THEN
+                        Unfinished += 1
+                     END ELSE
+                        FailCt += 1
+                     END
+                  END
+               NEXT Play
+               IF PlayCt - (Unfinished + FailCt) > 0 THEN
+                  LBCt += 1
+                  WinPcnt = ((PlayCt - (Unfinished + FailCt)) / (PlayCt - Unfinished) * 100)
+                  SortSkew = WinPcnt + ((PlayCt - Unfinished)/1000) 'R00'
+                  LBArr<1,LBCt> = K.WordleUser
+                  LBArr<2,LBCt> = PlayCt - Unfinished
+                  LBArr<3,LBCt> = WonCt
+                  LBArr<4,LBCt> = FailCt
+                  LBArr<5,LBCt> = WinPcnt
+                  LBArr<6,LBCt> = Unfinished
+                  LBArr<7,LBCt> = SortSkew
+                  LBArr<8,LBCt> = LastPlayDt
+               END
+            END
+         END
+      REPEAT
+*
+      CALL SORT.ARRAY(LBArr, 7, 'DR', '')
+      CRT @(0,0):@(-1)
+      CRT @(10,0):BoldOn:'LEADER BOARD':BoldOff
+      CRT @(10,2):'         Played   Win %     Last Played'
+      FOR LB = 1 TO LBCt
+         CRT @(10,2+LB):LBArr<1,LB> 'L#12':LBArr<2,LB> 'R#3':LBArr<5,LB> 'R2#8'
+         CRT @(40,2+LB):OCONV(LBArr<8,LB>, 'D2/')
+      NEXT LB
+*
+      INPUT Dummy
+      RETURN
+*
